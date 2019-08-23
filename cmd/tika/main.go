@@ -26,7 +26,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/google/go-tika/tika"
+	"github.com/SystemLogicIt/go-tika/tika"
 )
 
 func usage() {
@@ -72,7 +72,7 @@ func main() {
 	action := flag.Arg(0)
 
 	if *downloadVersion != "" {
-		v := tika.Versions[len(tika.Versions) - 1]
+		v := tika.Versions[len(tika.Versions)-1]
 		supported := false
 		for _, sv := range tika.Versions {
 			if tika.Version(*downloadVersion) == sv {
@@ -144,23 +144,23 @@ func process(c *tika.Client, action string, file io.Reader) (string, error) {
 		return "", fmt.Errorf("error: invalid action %q", action)
 	case parse:
 		if *recursive {
-			bs, err := c.ParseRecursive(context.Background(), file)
+			bs, err := c.ParseRecursive(context.Background(), file, nil)
 			if err != nil {
 				return "", err
 			}
 			return strings.Join(bs, "\n"), nil
 		}
-		return c.Parse(context.Background(), file)
+		return c.Parse(context.Background(), file, nil)
 	case detect:
-		return c.Detect(context.Background(), file)
+		return c.Detect(context.Background(), file, nil)
 	case language:
-		return c.Language(context.Background(), file)
+		return c.Language(context.Background(), file, nil)
 	case meta:
 		if *metaField != "" {
-			return c.MetaField(context.Background(), file, *metaField)
+			return c.MetaField(context.Background(), file, *metaField, nil)
 		}
 		if *recursive {
-			mr, err := c.MetaRecursive(context.Background(), file)
+			mr, err := c.MetaRecursive(context.Background(), file, nil)
 			if err != nil {
 				return "", err
 			}
@@ -170,11 +170,11 @@ func process(c *tika.Client, action string, file io.Reader) (string, error) {
 			}
 			return string(bytes), nil
 		}
-		return c.Meta(context.Background(), file)
+		return c.Meta(context.Background(), file, nil)
 	case version:
-		return c.Version(context.Background())
+		return c.Version(context.Background(), nil)
 	case parsers:
-		p, err := c.Parsers(context.Background())
+		p, err := c.Parsers(context.Background(), nil)
 		if err != nil {
 			return "", err
 		}
@@ -184,7 +184,7 @@ func process(c *tika.Client, action string, file io.Reader) (string, error) {
 		}
 		return string(bytes), nil
 	case mimeTypes:
-		mt, err := c.MIMETypes(context.Background())
+		mt, err := c.MIMETypes(context.Background(), nil)
 		if err != nil {
 			return "", err
 		}
@@ -194,7 +194,7 @@ func process(c *tika.Client, action string, file io.Reader) (string, error) {
 		}
 		return string(bytes), nil
 	case detectors:
-		d, err := c.Detectors(context.Background())
+		d, err := c.Detectors(context.Background(), nil)
 		if err != nil {
 			return "", err
 		}

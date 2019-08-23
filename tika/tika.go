@@ -114,8 +114,8 @@ func (c *Client) call(ctx context.Context, input io.Reader, method, path string,
 
 // callString makes the given request to c and returns the result as a string
 // and error. callString returns an error if the response code is not 200 StatusOK.
-func (c *Client) callString(ctx context.Context, input io.Reader, method, path string) (string, error) {
-	body, err := c.call(ctx, input, method, path, nil)
+func (c *Client) callString(ctx context.Context, input io.Reader, method, path string, header http.Header) (string, error) {
+	body, err := c.call(ctx, input, method, path, header)
 	if err != nil {
 		return "", err
 	}
@@ -124,16 +124,16 @@ func (c *Client) callString(ctx context.Context, input io.Reader, method, path s
 
 // Parse parses the given input, returning the body of the input and an error.
 // If the error is not nil, the body is undefined.
-func (c *Client) Parse(ctx context.Context, input io.Reader) (string, error) {
-	return c.callString(ctx, input, "PUT", "/tika")
+func (c *Client) Parse(ctx context.Context, input io.Reader, header http.Header) (string, error) {
+	return c.callString(ctx, input, "PUT", "/tika", header)
 }
 
 // ParseRecursive parses the given input and all embedded documents, returning a
 // list of the contents of the input with one element per document. See
 // MetaRecursive for access to all metadata fields. If the error is not nil, the
 // result is undefined.
-func (c *Client) ParseRecursive(ctx context.Context, input io.Reader) ([]string, error) {
-	m, err := c.MetaRecursive(ctx, input)
+func (c *Client) ParseRecursive(ctx context.Context, input io.Reader, header http.Header) ([]string, error) {
+	m, err := c.MetaRecursive(ctx, input, header)
 	if err != nil {
 		return nil, err
 	}
@@ -148,35 +148,35 @@ func (c *Client) ParseRecursive(ctx context.Context, input io.Reader) ([]string,
 
 // Meta parses the metadata from the given input, returning the metadata and an
 // error. If the error is not nil, the metadata is undefined.
-func (c *Client) Meta(ctx context.Context, input io.Reader) (string, error) {
-	return c.callString(ctx, input, "PUT", "/meta")
+func (c *Client) Meta(ctx context.Context, input io.Reader, header http.Header) (string, error) {
+	return c.callString(ctx, input, "PUT", "/meta", header)
 }
 
 // MetaField parses the metadata from the given input and returns the given
 // field. If the error is not nil, the result string is undefined.
-func (c *Client) MetaField(ctx context.Context, input io.Reader, field string) (string, error) {
-	return c.callString(ctx, input, "PUT", fmt.Sprintf("/meta/%v", field))
+func (c *Client) MetaField(ctx context.Context, input io.Reader, field string, header http.Header) (string, error) {
+	return c.callString(ctx, input, "PUT", fmt.Sprintf("/meta/%v", field), header)
 }
 
 // Detect gets the mimetype of the given input, returning the mimetype and an
 // error. If the error is not nil, the mimetype is undefined.
-func (c *Client) Detect(ctx context.Context, input io.Reader) (string, error) {
-	return c.callString(ctx, input, "PUT", "/detect/stream")
+func (c *Client) Detect(ctx context.Context, input io.Reader, header http.Header) (string, error) {
+	return c.callString(ctx, input, "PUT", "/detect/stream", header)
 }
 
 // Language detects the language of the given input, returning the two letter
 // language code and an error. If the error is not nil, the language is
 // undefined.
-func (c *Client) Language(ctx context.Context, input io.Reader) (string, error) {
-	return c.callString(ctx, input, "PUT", "/language/stream")
+func (c *Client) Language(ctx context.Context, input io.Reader, header http.Header) (string, error) {
+	return c.callString(ctx, input, "PUT", "/language/stream", header)
 }
 
 // LanguageString detects the language of the given string, returning the two letter
 // language code and an error. If the error is not nil, the language is
 // undefined.
-func (c *Client) LanguageString(ctx context.Context, input string) (string, error) {
+func (c *Client) LanguageString(ctx context.Context, input string, header http.Header) (string, error) {
 	r := strings.NewReader(input)
-	return c.callString(ctx, r, "PUT", "/language/string")
+	return c.callString(ctx, r, "PUT", "/language/string", header)
 }
 
 // MetaRecursive parses the given input and all embedded documents. The result
@@ -184,8 +184,8 @@ func (c *Client) LanguageString(ctx context.Context, input string) (string, erro
 // of each document is in the XTIKAContent field in text form. See
 // ParseRecursive to just get the content of each document. If the error is not
 // nil, the result list is undefined.
-func (c *Client) MetaRecursive(ctx context.Context, input io.Reader) ([]map[string][]string, error) {
-	return c.MetaRecursiveType(ctx, input, "text")
+func (c *Client) MetaRecursive(ctx context.Context, input io.Reader, header http.Header) ([]map[string][]string, error) {
+	return c.MetaRecursiveType(ctx, input, "text", header)
 }
 
 // MetaRecursiveType parses the given input and all embedded documents. The result
@@ -194,12 +194,12 @@ func (c *Client) MetaRecursive(ctx context.Context, input io.Reader) ([]map[stri
 // by the contentType parameter An empty string can be passed in for a default
 // type of XML. See ParseRecursive to just get the content of each document. If
 // the error is not nil, the result list is undefined.
-func (c *Client) MetaRecursiveType(ctx context.Context, input io.Reader, contentType string) ([]map[string][]string, error) {
+func (c *Client) MetaRecursiveType(ctx context.Context, input io.Reader, contentType string, header http.Header) ([]map[string][]string, error) {
 	path := "/rmeta"
 	if contentType != "" {
 		path = fmt.Sprintf("/rmeta/%s", contentType)
 	}
-	body, err := c.call(ctx, input, "PUT", path, nil)
+	body, err := c.call(ctx, input, "PUT", path, header)
 	if err != nil {
 		return nil, err
 	}
@@ -233,20 +233,23 @@ func (c *Client) MetaRecursiveType(ctx context.Context, input io.Reader, content
 
 // Translate returns an error and the translated input from src language to
 // dst language using t. If the error is not nil, the translation is undefined.
-func (c *Client) Translate(ctx context.Context, input io.Reader, t Translator, src, dst string) (string, error) {
-	return c.callString(ctx, input, "POST", fmt.Sprintf("/translate/all/%s/%s/%s", t, src, dst))
+func (c *Client) Translate(ctx context.Context, input io.Reader, t Translator, src, dst string, header http.Header) (string, error) {
+	return c.callString(ctx, input, "POST", fmt.Sprintf("/translate/all/%s/%s/%s", t, src, dst), header)
 }
 
 // Version returns the default hello message from Tika server.
-func (c *Client) Version(ctx context.Context) (string, error) {
-	return c.callString(ctx, nil, "GET", "/version")
+func (c *Client) Version(ctx context.Context, header http.Header) (string, error) {
+	return c.callString(ctx, nil, "GET", "/version", header)
 }
 
-var jsonHeader = http.Header{"Accept": []string{"application/json"}}
-
 // callUnmarshal is like call, but unmarshals the JSON response into v.
-func (c *Client) callUnmarshal(ctx context.Context, path string, v interface{}) error {
-	body, err := c.call(ctx, nil, "GET", path, jsonHeader)
+func (c *Client) callUnmarshal(ctx context.Context, path string, v interface{}, header http.Header) error {
+	if header == nil {
+		header = http.Header{}
+	}
+	header.Set("Accept", "application/json")
+
+	body, err := c.call(ctx, nil, "GET", path, header)
 	if err != nil {
 		return err
 	}
@@ -256,9 +259,9 @@ func (c *Client) callUnmarshal(ctx context.Context, path string, v interface{}) 
 // Parsers returns the list of available parsers and an error. If the error is
 // not nil, the list is undefined. To get all available parsers, iterate through
 // the Children of every Parser.
-func (c *Client) Parsers(ctx context.Context) (*Parser, error) {
+func (c *Client) Parsers(ctx context.Context, header http.Header) (*Parser, error) {
 	p := new(Parser)
-	if err := c.callUnmarshal(ctx, "/parsers/details", p); err != nil {
+	if err := c.callUnmarshal(ctx, "/parsers/details", p, header); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -266,9 +269,9 @@ func (c *Client) Parsers(ctx context.Context) (*Parser, error) {
 
 // MIMETypes returns a map from MIME Type name to MIMEType, or properties about
 // that specific MIMEType.
-func (c *Client) MIMETypes(ctx context.Context) (map[string]MIMEType, error) {
+func (c *Client) MIMETypes(ctx context.Context, header http.Header) (map[string]MIMEType, error) {
 	mt := make(map[string]MIMEType)
-	if err := c.callUnmarshal(ctx, "/mime-types", &mt); err != nil {
+	if err := c.callUnmarshal(ctx, "/mime-types", &mt, header); err != nil {
 		return nil, err
 	}
 	return mt, nil
@@ -276,9 +279,9 @@ func (c *Client) MIMETypes(ctx context.Context) (map[string]MIMEType, error) {
 
 // Detectors returns the list of available Detectors for this server. To get all
 // available detectors, iterate through the Children of every Detector.
-func (c *Client) Detectors(ctx context.Context) (*Detector, error) {
+func (c *Client) Detectors(ctx context.Context, header http.Header) (*Detector, error) {
 	d := new(Detector)
-	if err := c.callUnmarshal(ctx, "/detectors", d); err != nil {
+	if err := c.callUnmarshal(ctx, "/detectors", d, header); err != nil {
 		return nil, err
 	}
 	return d, nil

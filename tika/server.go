@@ -101,7 +101,7 @@ func (s Server) waitForStart(ctx context.Context) error {
 	for {
 		select {
 		case <-t.C:
-			if _, err := c.Version(ctx); err == nil {
+			if _, err := c.Version(ctx, nil); err == nil {
 				return nil
 			}
 		case <-ctx.Done():
@@ -142,18 +142,21 @@ type Version string
 
 // Supported versions of Tika Server.
 const (
-	Version119 Version = "1.19"
-	Version120 Version = "1.20"
-	Version121 Version = "1.21"
+	Version119    Version = "1.19"
+	Version120    Version = "1.20"
+	Version121    Version = "1.21"
+	Version122    Version = "1.22"
+	VersionLatest Version = Version122
 )
 
 // Versions is a list of supported versions of Apache Tika.
-var Versions = []Version{Version119, Version120, Version121}
+var Versions = []Version{Version119, Version120, Version121, Version122}
 
 var sha512s = map[Version]string{
 	Version119: "a9e2b6186cdb9872466d3eda791d0e1cd059da923035940d4b51bb1adc4a356670fde46995725844a2dd500a09f3a5631d0ca5fbc2d61a59e8e0bd95c9dfa6c2",
 	Version120: "a7ef35317aba76be8606f9250893efece8b93384e835a18399da18a095b19a15af591e3997828d4ebd3023f21d5efad62a91918610c44e692cfd9bed01d68382",
 	Version121: "e705c836b2110530c8d363d05da27f65c4f6c9051b660cefdae0e5113c365dbabed2aa1e4171c8e52dbe4cbaa085e3d8a01a5a731e344942c519b85836da646c",
+	Version122: "9fdb48406f80cab32525d8947e123f90f61e4e9f168d9faea5ab4e0c8e4d2b760ddb62017ef61b1de87cdad642f8d09dea6c21a2a066ea4b34d7ba87003bf79c",
 }
 
 // DownloadServer downloads and validates the given server version,
