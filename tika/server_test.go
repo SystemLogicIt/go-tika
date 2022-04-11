@@ -46,7 +46,8 @@ func TestNewServerError(t *testing.T) {
 		port string
 	}{
 		{name: "no jar path"},
-		{name: "invalid port", jar: "jar/path", port: "%31"},
+		{name: "invalid port", jar: "test_resources/test.jar", port: "%31"},
+		{name: "missing jar file", jar: "test_resources/missing.jar"},
 	}
 	for _, test := range tests {
 		if _, err := NewServer(test.jar, test.port); err == nil {
@@ -112,6 +113,10 @@ func TestStartError(t *testing.T) {
 	defer cancel()
 	if err := s.Start(ctx); err == nil {
 		t.Fatalf("s.Start got no error, want error")
+	}
+	s.jar = "nonexistentFile.jar"
+	if err := s.Start(ctx); err == nil {
+		t.Fatalf("s.Start got no error, want error for missing Jar file")
 	}
 }
 
@@ -213,7 +218,7 @@ func TestValidateFileHash(t *testing.T) {
 
 func TestDownloadServerError(t *testing.T) {
 	tests := []struct {
-		version version
+		version Version
 		path    string
 	}{
 		{"1.0", ""},
@@ -222,5 +227,50 @@ func TestDownloadServerError(t *testing.T) {
 		if err := DownloadServer(context.Background(), test.version, test.path); err == nil {
 			t.Errorf("DownloadServer(%q, %q) got no error, want an error", test.version, test.path)
 		}
+	}
+}
+
+func TestAddJavaProps(t *testing.T) {
+	oldCommand := command
+	defer func() { command = oldCommand }()
+
+	path, err := os.Executable() // Use the text executable path as a dummy jar.
+	if err != nil {
+		t.Skip("cannot find current test executable")
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "1.14")
+	}))
+	defer ts.Close()
+	tsURL, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatalf("error creating test server: %v", err)
+	}
+
+	s, err := NewServer(path, tsURL.Port())
+	if err != nil {
+		t.Fatalf("NewServer got error: %v", err)
+	}
+
+	wantKey := "java.io.tmpdir"
+	wantVal := "/tmp/stuff"
+	s.JavaProps[wantKey] = wantVal
+
+	command = func(c string, args ...string) *exec.Cmd {
+		found := false
+		want := fmt.Sprintf("-D%s=%q", wantKey, wantVal)
+		for _, arg := range args {
+			if arg == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("NewServer got %v %v args, want to contain %s", c, args, want)
+		}
+		return oldCommand(c, args...)
+	}
+
+	if err := s.Start(context.Background()); err != nil {
+		t.Errorf("Start got error: %v", err)
 	}
 }

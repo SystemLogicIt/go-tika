@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
 	"time"
 
 	"golang.org/x/net/context/ctxhttp"
@@ -34,11 +35,49 @@ import (
 // from Start.
 // There is no need to create a Server for an already running Tika Server
 // since you can pass its URL directly to a Client.
+// Additional Java system properties can be added to a Taka Server before
+// startup by adding to the JavaProps map
 type Server struct {
-	jar  string
-	url  string // url is derived from port.
-	port string
-	cmd  *exec.Cmd
+	jar       string
+	url       string // url is derived from port.
+	port      string
+	cmd       *exec.Cmd
+	child     *ChildOptions
+	JavaProps map[string]string
+}
+
+// ChildOptions represent command line parameters that can be used when Tika is run with the -spawnChild option.
+// If a field is less than or equal to 0, the associated flag is not included.
+type ChildOptions struct {
+	MaxFiles          int
+	TaskPulseMillis   int
+	TaskTimeoutMillis int
+	PingPulseMillis   int
+	PingTimeoutMillis int
+}
+
+func (co *ChildOptions) args() []string {
+	if co == nil {
+		return nil
+	}
+	args := []string{}
+	args = append(args, "-spawnChild")
+	if co.MaxFiles == -1 || co.MaxFiles > 0 {
+		args = append(args, "-maxFiles", strconv.Itoa(co.MaxFiles))
+	}
+	if co.TaskPulseMillis > 0 {
+		args = append(args, "-taskPulseMillis", strconv.Itoa(co.TaskPulseMillis))
+	}
+	if co.TaskTimeoutMillis > 0 {
+		args = append(args, "-taskTimeoutMillis", strconv.Itoa(co.TaskTimeoutMillis))
+	}
+	if co.PingPulseMillis > 0 {
+		args = append(args, "-pingPulseMillis", strconv.Itoa(co.PingPulseMillis))
+	}
+	if co.PingTimeoutMillis > 0 {
+		args = append(args, "-pingTimeoutMillis", strconv.Itoa(co.PingTimeoutMillis))
+	}
+	return args
 }
 
 // URL returns the URL of this Server.
@@ -51,20 +90,41 @@ func NewServer(jar, port string) (*Server, error) {
 	if jar == "" {
 		return nil, fmt.Errorf("no jar file specified")
 	}
+
+	// Check if the jar file exists.
+	if _, err := os.Stat(jar); os.IsNotExist(err) {
+		return nil, fmt.Errorf("jar file %q does not exist", jar)
+	}
+
 	if port == "" {
 		port = "9998"
 	}
-	s := &Server{
-		jar:  jar,
-		port: port,
-	}
-	urlString := "http://localhost:" + s.port
+
+	urlString := "http://localhost:" + port
 	u, err := url.Parse(urlString)
 	if err != nil {
-		return nil, fmt.Errorf("invalid port %q: %v", s.port, err)
+		return nil, fmt.Errorf("invalid port %q: %v", port, err)
 	}
-	s.url = u.String()
+
+	s := &Server{
+		jar:       jar,
+		port:      port,
+		url:       u.String(),
+		JavaProps: map[string]string{},
+	}
+
 	return s, nil
+}
+
+// ChildMode sets up the server to use the -spawnChild option.
+// If used, ChildMode must be called before starting the server.
+// If you want to turn off the -spawnChild option, call Server.ChildMode(nil).
+func (s *Server) ChildMode(ops *ChildOptions) error {
+	if s.cmd != nil {
+		return fmt.Errorf("server process already started, cannot switch to spawn child mode")
+	}
+	s.child = ops
+	return nil
 }
 
 var command = exec.Command
@@ -74,7 +134,18 @@ var command = exec.Command
 // Server. Start will wait for the server to be available or until ctx is
 // cancelled.
 func (s *Server) Start(ctx context.Context) error {
-	cmd := command("java", "-jar", s.jar, "-p", s.port)
+	if _, err := os.Stat(s.jar); os.IsNotExist(err) {
+		return err
+	}
+
+	// Create a slice of Java system properties to be passed to the JVM.
+	props := []string{}
+	for k, v := range s.JavaProps {
+		props = append(props, fmt.Sprintf("-D%s=%q", k, v))
+	}
+
+	args := append(append(props, "-jar", s.jar, "-p", s.port), s.child.args()...)
+	cmd := command("java", args...)
 
 	if err := cmd.Start(); err != nil {
 		return err
@@ -113,12 +184,40 @@ func (s Server) waitForStart(ctx context.Context) error {
 // Stop shuts the server down, killing the underlying Java process. Stop
 // must be called when finished with the server to avoid leaking the
 // Java process. If s has not been started, Stop will panic.
+// If not running in a Windows environment, it is recommended to use Shutdown
+// for a more graceful shutdown of the Java process.
 func (s *Server) Stop() error {
 	if err := s.cmd.Process.Kill(); err != nil {
 		return fmt.Errorf("could not kill server: %v", err)
 	}
 	if err := s.cmd.Wait(); err != nil {
 		return fmt.Errorf("could not wait for server to finish: %v", err)
+	}
+	return nil
+}
+
+// Shutdown attempts to close the server gracefully before using SIGKILL,
+// Stop() uses SIGKILL right away, which causes the kernal to stop the java process instantly.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if err := s.cmd.Process.Signal(os.Interrupt); err != nil {
+		return fmt.Errorf("could not interrupt server: %v", err)
+	}
+	errChannel := make(chan error)
+	go func() {
+		select {
+		case errChannel <- s.cmd.Wait():
+		case <-ctx.Done():
+		}
+	}()
+	select {
+	case err := <-errChannel:
+		if err != nil {
+			return fmt.Errorf("could not wait for server to finish: %v", err)
+		}
+	case <-ctx.Done():
+		if err := s.cmd.Process.Kill(); err != nil {
+			return fmt.Errorf("could not kill server: %v", err)
+		}
 	}
 	return nil
 }

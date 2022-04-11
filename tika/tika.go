@@ -21,13 +21,37 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"reflect"
 	"strings"
 
 	"golang.org/x/net/context/ctxhttp"
 )
+
+// ClientError is returned by Client's various parse methods and
+// represents an error response from the Tika server. Example usage:
+//
+//    client := tika.NewClient(nil, tikaURL)
+//    s, err := client.Parse(context.Background(), input)
+//    var tikaErr tika.ClientError
+//    if errors.As(err, &tikaErr) {
+//        switch tikaErr.StatusCode {
+//        case http.StatusUnsupportedMediaType, http.StatusUnprocessableEntity:
+//            // Handle content related error
+//        default:
+//            // Handle possibly intermittent http error
+//        }
+//    } else if err != nil {
+//        // Handle non-http error
+//    }
+type ClientError struct {
+	// StatusCode is the HTTP status code returned by the Tika server.
+	StatusCode int
+}
+
+func (e ClientError) Error() string {
+	return fmt.Sprintf("response code %d", e.StatusCode)
+}
 
 // Client represents a connection to a Tika Server.
 type Client struct {
@@ -88,9 +112,9 @@ const (
 // parsing. See ParseRecursive and MetaRecursive.
 const XTIKAContent = "X-TIKA:content"
 
-// call makes the given request to c and returns the result as a []byte and
-// error. call returns an error if the response code is not 200 StatusOK.
-func (c *Client) call(ctx context.Context, input io.Reader, method, path string, header http.Header) ([]byte, error) {
+// call makes the given request to c and returns the response body.
+// call returns an error and a nil reader if the response code is not 200 StatusOK.
+func (c *Client) call(ctx context.Context, input io.Reader, method, path string, header http.Header) (io.ReadCloser, error) {
 	if c.httpClient == nil {
 		c.httpClient = http.DefaultClient
 	}
@@ -105,11 +129,11 @@ func (c *Client) call(ctx context.Context, input io.Reader, method, path string,
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("response code %v", resp.StatusCode)
+		resp.Body.Close()
+		return nil, ClientError{resp.StatusCode}
 	}
-	return ioutil.ReadAll(resp.Body)
+	return resp.Body, nil
 }
 
 // callString makes the given request to c and returns the result as a string
@@ -119,13 +143,26 @@ func (c *Client) callString(ctx context.Context, input io.Reader, method, path s
 	if err != nil {
 		return "", err
 	}
-	return string(body), nil
+	defer body.Close()
+
+	b := &strings.Builder{}
+	if _, err := io.Copy(b, body); err != nil {
+		return "", err
+	}
+
+	return b.String(), nil
 }
 
-// Parse parses the given input, returning the body of the input and an error.
+// Parse parses the given input, returning the body of the input as a string and an error.
 // If the error is not nil, the body is undefined.
 func (c *Client) Parse(ctx context.Context, input io.Reader, header http.Header) (string, error) {
 	return c.callString(ctx, input, "PUT", "/tika", header)
+}
+
+// ParseReader parses the given input, returning the body of the input as a reader and an error.
+// If the error is nil, the returned reader must be closed, else, the reader is nil.
+func (c *Client) ParseReader(ctx context.Context, input io.Reader) (io.ReadCloser, error) {
+	return c.call(ctx, input, "PUT", "/tika", nil)
 }
 
 // ParseRecursive parses the given input and all embedded documents, returning a
@@ -203,8 +240,9 @@ func (c *Client) MetaRecursiveType(ctx context.Context, input io.Reader, content
 	if err != nil {
 		return nil, err
 	}
+	defer body.Close()
 	var m []map[string]interface{}
-	if err := json.Unmarshal(body, &m); err != nil {
+	if err := json.NewDecoder(body).Decode(&m); err != nil {
 		return nil, err
 	}
 	var r []map[string][]string
@@ -237,6 +275,13 @@ func (c *Client) Translate(ctx context.Context, input io.Reader, t Translator, s
 	return c.callString(ctx, input, "POST", fmt.Sprintf("/translate/all/%s/%s/%s", t, src, dst), header)
 }
 
+// TranslateReader translates the given input from src language to dst language using t.
+// It returns the translated document as a reader. If an error occurs, the reader is nil, else, the reader
+// must be closed by the caller after usage.
+func (c *Client) TranslateReader(ctx context.Context, input io.Reader, t Translator, src, dst string) (io.ReadCloser, error) {
+	return c.call(ctx, input, "POST", fmt.Sprintf("/translate/all/%s/%s/%s", t, src, dst), nil)
+}
+
 // Version returns the default hello message from Tika server.
 func (c *Client) Version(ctx context.Context, header http.Header) (string, error) {
 	return c.callString(ctx, nil, "GET", "/version", header)
@@ -253,7 +298,8 @@ func (c *Client) callUnmarshal(ctx context.Context, path string, v interface{}, 
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(body, v)
+	defer body.Close()
+	return json.NewDecoder(body).Decode(v)
 }
 
 // Parsers returns the list of available parsers and an error. If the error is
